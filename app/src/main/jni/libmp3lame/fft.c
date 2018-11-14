@@ -44,9 +44,6 @@
 #include "util.h"
 #include "fft.h"
 
-#include "lame_intrin.h"
-
-
 
 #define TRI_SIZE (5-1)  /* 1024 =  4**5 */
 
