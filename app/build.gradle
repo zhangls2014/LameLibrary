@@ -1,13 +1,11 @@
 apply plugin: 'com.android.application'
-
 apply plugin: 'kotlin-android'
-
 apply plugin: 'kotlin-android-extensions'
 
 android {
     compileSdkVersion 28
     defaultConfig {
-        applicationId "com.zhangls.android.lame"
+        applicationId "com.zhangls.android.sample"
         minSdkVersion 21
         targetSdkVersion 28
         versionCode 1
@@ -17,11 +15,6 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
-        }
-    }
-    externalNativeBuild {
-        ndkBuild {
-            path file('src/main/jni/Android.mk')
         }
     }
     compileOptions {
@@ -43,4 +36,5 @@ dependencies {
     implementation 'com.trello.rxlifecycle2:rxlifecycle:2.0.1'
     implementation 'com.trello.rxlifecycle2:rxlifecycle-android:2.0.1'
     implementation 'com.trello.rxlifecycle2:rxlifecycle-components:2.0.1'
+    implementation project(':lame')
 }

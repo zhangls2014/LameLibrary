@@ -1,4 +1,4 @@
-package com.zhangls.android.lame
+package com.zhangls.android.sample
 
 import android.Manifest.permission.RECORD_AUDIO
 import android.Manifest.permission.WRITE_EXTERNAL_STORAGE
@@ -10,6 +10,10 @@ import com.github.piasy.rxandroidaudio.PlayConfig
 import com.github.piasy.rxandroidaudio.RxAudioPlayer
 import com.tbruyelle.rxpermissions2.RxPermissions
 import com.trello.rxlifecycle2.components.support.RxAppCompatActivity
+import com.zhangls.android.lame.DataEncodeThread
+import com.zhangls.android.lame.LameUtil
+import com.zhangls.android.lame.R
+import com.zhangls.android.lame.StreamAudioRecorder
 import io.reactivex.android.schedulers.AndroidSchedulers
 import io.reactivex.schedulers.Schedulers
 import kotlinx.android.synthetic.main.activity_main.*
