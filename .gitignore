@@ -6,7 +6,4 @@
 /build
 /captures
 .externalNativeBuild
-libs/
-src/main/libs/
 src/main/obj/
-src/main/res/
