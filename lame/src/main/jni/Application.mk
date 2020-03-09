@@ -1,4 +1,0 @@
-APP_MODULES := libmp3lame
-APP_CFLAGS += -DSTDC_HEADERS
-APP_PLATFORM := android-21
-APP_ABI := all

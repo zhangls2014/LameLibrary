@@ -2,7 +2,6 @@ package com.zhangls.android.sample
 
 import android.Manifest.permission.RECORD_AUDIO
 import android.Manifest.permission.WRITE_EXTERNAL_STORAGE
-import android.media.AudioFormat
 import android.media.AudioManager
 import android.os.Bundle
 import android.widget.Toast
@@ -10,149 +9,137 @@ import com.github.piasy.rxandroidaudio.PlayConfig
 import com.github.piasy.rxandroidaudio.RxAudioPlayer
 import com.tbruyelle.rxpermissions2.RxPermissions
 import com.trello.rxlifecycle2.components.support.RxAppCompatActivity
-import com.zhangls.android.lame.DataEncodeThread
-import com.zhangls.android.lame.LameUtil
-import com.zhangls.android.lame.R
+import com.zhangls.android.lame.AudioDataCallback
+import com.zhangls.android.lame.EncodeThread
 import com.zhangls.android.lame.StreamAudioRecorder
 import io.reactivex.android.schedulers.AndroidSchedulers
 import io.reactivex.schedulers.Schedulers
 import kotlinx.android.synthetic.main.activity_main.*
 import java.io.File
-import java.io.FileOutputStream
-import java.io.IOException
-import java.util.*
 
 
+/**
+ * 录音测试
+ *
+ * @author zhangls
+ */
 class MainActivity : RxAppCompatActivity() {
 
-  private val mStreamAudioRecorder by lazy { StreamAudioRecorder.instance }
-  private val mAudioPlayer by lazy { RxAudioPlayer.getInstance() }
-  private var mFileOutputStream: FileOutputStream? = null
-  private val mPermissions by lazy { RxPermissions(this) }
-  private lateinit var mOutputFile: File
-  private var mIsRecording = false
-  private val lame by lazy { LameUtil() }
-  private lateinit var mEncodeThread: DataEncodeThread
+  private val audioPlayer by lazy { RxAudioPlayer.getInstance() }
+  private val permissions by lazy { RxPermissions(this) }
+  private var outputFile: File? = null
+  private var isRecording = false
+  private var encodeThread: EncodeThread? = null
 
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     setContentView(R.layout.activity_main)
 
-    btnRecord.text = "Record"
-    btnPlay.text = "Play"
+    btnRecord.apply {
+      setText(R.string.record_start)
+      setOnClickListener {
+        if (isRecording) {
+          stopRecord()
+          setText(R.string.record_start)
+          isRecording = false
+        } else {
+          val isGranted = permissions.isGranted(WRITE_EXTERNAL_STORAGE) && permissions.isGranted(RECORD_AUDIO)
 
-    lame.init(
-        StreamAudioRecorder.DEFAULT_SAMPLE_RATE,
-        AudioFormat.CHANNEL_IN_MONO,
-        StreamAudioRecorder.DEFAULT_SAMPLE_RATE,
-        32,
-        0
-    )
-    mEncodeThread = object : DataEncodeThread() {
-      override fun processData(queue: Queue<Task>) {
-        if (queue.isNotEmpty()) {
-          val task = queue.poll()
-          val size = task.readSize
-          val short = task.data
-          val mBuffer = ByteArray((7200 + 1.25 * size).toInt())
-          val encode = lame.encode(short, short, size, mBuffer)
-
-          mFileOutputStream?.write(mBuffer, 0, encode)
-        }
-      }
-
-      override fun flushAndRelease() {
-        try {
-          lame.close()
-          mFileOutputStream!!.close()
-          mFileOutputStream = null
-        } catch (e: IOException) {
-          e.printStackTrace()
+          if (isGranted.not()) {
+            getPermission()
+          } else {
+            startRecord()
+            setText(R.string.record_stop)
+            isRecording = true
+          }
         }
       }
     }
-    mEncodeThread.start()
-
-    btnPlay.setOnClickListener { play() }
-    btnRecord.setOnClickListener {
-      if (mIsRecording) {
-        stopRecord()
-        btnRecord!!.text = "Record"
-        mIsRecording = false
-      } else {
-        val isGranted =
-            mPermissions.isGranted(WRITE_EXTERNAL_STORAGE) && mPermissions.isGranted(RECORD_AUDIO)
-
-        if (isGranted.not()) {
-          mPermissions
-              .request(WRITE_EXTERNAL_STORAGE, RECORD_AUDIO)
-              .subscribe { granted ->
-                if (granted) {
-                  Toast.makeText(
-                      applicationContext, "Permission granted",
-                      Toast.LENGTH_SHORT
-                  ).show()
-                } else {
-                  Toast.makeText(
-                      applicationContext,
-                      "Permission not granted", Toast.LENGTH_SHORT
-                  ).show()
-                }
-              }
-        } else {
-          startRecord()
-          btnRecord.text = "Stop"
-          mIsRecording = true
-        }
-      }
+    btnPlay.apply {
+      setText(R.string.audio_play)
+      setOnClickListener { playAudio() }
     }
   }
 
+  override fun onDestroy() {
+    super.onDestroy()
+    encodeThread?.quit()
+  }
+
+  private fun getPermission() {
+    val subscribe = permissions
+      .request(WRITE_EXTERNAL_STORAGE, RECORD_AUDIO)
+      .subscribe { granted ->
+        if (granted) {
+          showToast(getString(R.string.permission_granted))
+        } else {
+          showToast(getString(R.string.permission_refused))
+        }
+      }
+  }
+
   private fun startRecord() {
-    try {
-      mOutputFile = File(externalCacheDir?.path + File.separator + System.nanoTime() + ".mp3")
-      mOutputFile.createNewFile()
-      mFileOutputStream = FileOutputStream(mOutputFile, true)
-      val callback = object : StreamAudioRecorder.AudioDataCallback {
+    initRecordConfig()
+
+    encodeThread?.apply {
+      val callback = object : AudioDataCallback {
         override fun onAudioData(data: ShortArray, size: Int) {
-          mEncodeThread.addTask(DataEncodeThread.Task(data, size))
+          addPcmBuffers(data, size)
         }
 
         override fun onError() {
           recordError()
         }
       }
-      mStreamAudioRecorder.start(callback, mEncodeThread, mEncodeThread.handler)
-    } catch (e: IOException) {
-      e.printStackTrace()
-      recordError()
+      StreamAudioRecorder.start(callback, this, handler)
     }
   }
 
   private fun stopRecord() {
-    mStreamAudioRecorder.stop()
-    mEncodeThread.sendStopMessage()
+    StreamAudioRecorder.stop()
+    encodeThread?.finishEncode()
+  }
+
+  private fun initRecordConfig() {
+    StreamAudioRecorder.init()
+    encodeThread = EncodeThread(quality = 5)
+    encodeThread?.start()
+    outputFile = File(externalCacheDir?.path + File.separator + System.nanoTime() + ".mp3").let {
+      if (it.createNewFile()) {
+        encodeThread?.setOutPutFile(it)
+        it
+      } else {
+        null
+      }
+    }
   }
 
   private fun recordError() {
     btnRecord.post {
-      Toast.makeText(
-          applicationContext, "Record fail",
-          Toast.LENGTH_SHORT
-      ).show()
-      btnRecord.text = "Record"
-      mIsRecording = false
+      showToast(getString(R.string.record_fail))
+      btnRecord.setText(R.string.record_start)
+      isRecording = false
     }
   }
 
-  private fun play() {
-    mAudioPlayer.play(
-        PlayConfig.file(mOutputFile)
-            .streamType(AudioManager.STREAM_VOICE_CALL)
-            .build())
-        .subscribeOn(Schedulers.io())
-        .observeOn(AndroidSchedulers.mainThread())
-        .subscribe()
+  private fun playAudio() {
+    if (outputFile == null) {
+      showToast(getString(R.string.audio_play_fail))
+      return
+    }
+
+    audioPlayer.play(
+        PlayConfig.file(outputFile)
+          .streamType(AudioManager.STREAM_VOICE_CALL)
+          .build()
+      )
+      .subscribeOn(Schedulers.io())
+      .observeOn(AndroidSchedulers.mainThread())
+      .subscribe()
+  }
+
+  private fun showToast(message: String) {
+    Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
   }
 }

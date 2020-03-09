@@ -5,6 +5,7 @@
 .DS_Store
 /build
 /captures
+.cxx
 .externalNativeBuild
 src/main/libs/
 src/main/obj/

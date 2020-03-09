@@ -4,50 +4,79 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Handler
-import androidx.annotation.NonNull
-import androidx.annotation.WorkerThread
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.experimental.and
+
 
 /**
  * @author zhangls
  */
-class StreamAudioRecorder private constructor() {
+object StreamAudioRecorder {
+  private val executorService: ExecutorService = Executors.newSingleThreadExecutor()
+  private var sampleRate: Int = DEFAULT_SAMPLE_RATE
+  private var channelConfig: Int = DEFAULT_CHANNEL_CONFIG
+  private var audioFormat: Int = DEFAULT_AUDIO_FORMAT
 
-  private val mIsRecording = AtomicBoolean(false)
-  private var mExecutorService: ExecutorService? = null
+  /**
+   * 状态标记：是否正在录音
+   */
+  private val isRecording = AtomicBoolean(false)
 
-
-  companion object {
-    const val DEFAULT_SAMPLE_RATE = 44100
-    const val DEFAULT_BUFFER_SIZE = 2048
-    /**
-     * 自定义 每160帧作为一个周期，通知一下需要进行编码
-     */
-    private const val FRAME_COUNT = 160
-
-    val instance = StreamAudioRecorderHolder.holder
+  /**
+   * 初始化。配置默认参数
+   */
+  fun init() {
+    init(DEFAULT_SAMPLE_RATE, DEFAULT_CHANNEL_CONFIG, DEFAULT_AUDIO_FORMAT)
   }
 
-  private object StreamAudioRecorderHolder {
-    val holder = StreamAudioRecorder()
+  /**
+   * 初始化，配置参数
+   */
+  @Suppress("MemberVisibilityCanBePrivate")
+  fun init(
+    sampleRate: Int = DEFAULT_SAMPLE_RATE,
+    channelConfig: Int = DEFAULT_CHANNEL_CONFIG,
+    audioFormat: Int = DEFAULT_AUDIO_FORMAT
+  ) {
+    this.sampleRate = sampleRate
+    this.channelConfig = channelConfig
+    this.audioFormat = audioFormat
+
+    if (isValidSampleRate(sampleRate).not()) throw Exception("系统不支持该音频采样率")
+
+    // 再次调用初始化方法时，如果正在录音，立即取消
+    if (isRecording.get()) stop()
   }
 
+  /**
+   * 获取手机支持的音频采样率
+   */
+  private fun isValidSampleRate(sampleRate: Int): Boolean {
+    val bufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
+    return bufferSize > 0
+  }
 
   @Synchronized
-  fun start(@NonNull audioDataCallback: AudioDataCallback,
-            listener: AudioRecord.OnRecordPositionUpdateListener,
-            handler: Handler): Boolean {
+  fun start(
+    audioDataCallback: AudioDataCallback,
+    listener: AudioRecord.OnRecordPositionUpdateListener,
+    handler: Handler
+  ): Boolean {
     stop()
 
-    mExecutorService = Executors.newSingleThreadExecutor()
-    if (mIsRecording.compareAndSet(false, true)) {
-      mExecutorService?.execute(
+    if (isRecording.compareAndSet(false, true)) {
+      val minBufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
+      executorService.execute(
         AudioRecordRunnable(
-          DEFAULT_SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, DEFAULT_BUFFER_SIZE,
-          audioDataCallback, listener, handler)
+          sampleRate,
+          channelConfig,
+          audioFormat,
+          minBufferSize,
+          audioDataCallback,
+          listener,
+          handler
+        )
       )
       return true
     }
@@ -56,85 +85,74 @@ class StreamAudioRecorder private constructor() {
 
   @Synchronized
   fun stop() {
-    mIsRecording.compareAndSet(true, false)
-
-    if (mExecutorService != null) {
-      mExecutorService?.shutdown()
-      mExecutorService = null
-    }
+    isRecording.compareAndSet(true, false)
   }
 
-  /**
-   * Although Android frameworks jni implementation are the same for ENCODING_PCM_16BIT and
-   * ENCODING_PCM_8BIT, the Java doc declared that the buffer type should be the corresponding
-   * type, so we use different ways.
-   */
-  interface AudioDataCallback {
-    @WorkerThread
-    fun onAudioData(data: ShortArray, size: Int)
-
-    fun onError()
-  }
-
-  private inner class AudioRecordRunnable
-  internal constructor(
-      sampleRate: Int, channelConfig: Int, private val mAudioFormat: Int,
-      private val mByteBufferSize: Int,
-      @param:NonNull private val mAudioDataCallback: AudioDataCallback,
-      listener: AudioRecord.OnRecordPositionUpdateListener,
-      handler: Handler
+  class AudioRecordRunnable constructor(
+    sampleRate: Int,
+    channelConfig: Int,
+    private val audioFormat: Int,
+    minBufferSize: Int,
+    private val audioDataCallback: AudioDataCallback,
+    listener: AudioRecord.OnRecordPositionUpdateListener,
+    handler: Handler
   ) : Runnable {
-
-    private val mAudioRecord: AudioRecord
-
-    private val mByteBuffer: ByteArray
-    private val mShortBuffer: ShortArray
-    private val mShortBufferSize: Int
+    private val byteBuffer: ByteArray
+    private val shortBuffer: ShortArray
+    private val audioRecord: AudioRecord
 
     init {
-      val minBufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, mAudioFormat)
-      mShortBufferSize = mByteBufferSize / 2
-      mByteBuffer = ByteArray(mByteBufferSize)
-      mShortBuffer = ShortArray(mShortBufferSize)
-      mAudioRecord = AudioRecord(
-          MediaRecorder.AudioSource.MIC, sampleRate, channelConfig,
-          mAudioFormat, Math.max(minBufferSize, mByteBufferSize)
-      )
-      mAudioRecord.positionNotificationPeriod = FRAME_COUNT
-      mAudioRecord.setRecordPositionUpdateListener(listener, handler)
+      val bytesPerFrame: Int = if (audioFormat == AudioFormat.ENCODING_PCM_16BIT) 2 else 1
+      // 计算缓冲区的大小，使其是设置周期帧数的整数倍，方便循环
+      var frameSize = minBufferSize / bytesPerFrame
+      if (frameSize % DEFAULT_FRAME_COUNT != 0) {
+        frameSize += (DEFAULT_FRAME_COUNT - frameSize % DEFAULT_FRAME_COUNT)
+      }
+      val bufferSize = frameSize * bytesPerFrame
+
+      byteBuffer = ByteArray(bufferSize)
+      shortBuffer = ShortArray(bufferSize)
+
+      audioRecord = AudioRecord(
+        MediaRecorder.AudioSource.MIC,
+        sampleRate,
+        channelConfig,
+        audioFormat,
+        bufferSize
+      ).apply {
+        positionNotificationPeriod = DEFAULT_FRAME_COUNT
+        setRecordPositionUpdateListener(listener, handler)
+      }
     }
 
     override fun run() {
-      if (mAudioRecord.state == AudioRecord.STATE_INITIALIZED) {
-        try {
-          mAudioRecord.startRecording()
-        } catch (e: IllegalStateException) {
-          mAudioDataCallback.onError()
-          return
-        }
+      if (audioRecord.state == AudioRecord.STATE_INITIALIZED) {
+        audioRecord.startRecording()
 
-        while (mIsRecording.get()) {
-          val ret: Int
-          if (mAudioFormat == AudioFormat.ENCODING_PCM_16BIT) {
-            ret = mAudioRecord.read(mShortBuffer, 0, mShortBufferSize)
-            if (ret > 0) {
-              mAudioDataCallback.onAudioData(mShortBuffer, ret)
+        while (isRecording.get()) {
+          val result: Int
+          if (audioFormat == AudioFormat.ENCODING_PCM_16BIT) {
+            result = audioRecord.read(shortBuffer, 0, shortBuffer.size)
+            if (result > 0) {
+              audioDataCallback.onAudioData(shortBuffer, result)
             } else {
-              onError(ret)
+              audioDataCallback.onError()
               break
             }
           } else {
-            ret = mAudioRecord.read(mByteBuffer, 0, mByteBufferSize)
-            if (ret > 0) {
-              mAudioDataCallback.onAudioData(byte2shot(mByteBuffer), ret)
+            result = audioRecord.read(byteBuffer, 0, byteBuffer.size)
+            if (result > 0) {
+              audioDataCallback.onAudioData(byte2shot(byteBuffer), result)
             } else {
-              onError(ret)
+              audioDataCallback.onError()
               break
             }
           }
         }
+
+        audioRecord.stop()
       }
-      mAudioRecord.release()
+      audioRecord.release()
     }
 
     private fun byte2shot(bData: ByteArray): ShortArray {
@@ -144,25 +162,5 @@ class StreamAudioRecorder private constructor() {
       }
       return short
     }
-
-    private fun short2byte(sData: ShortArray, size: Int, bData: ByteArray): ByteArray {
-      if (size > sData.size || size * 2 > bData.size) {
-      }
-      for (i in 0 until size) {
-        bData[i * 2] = (sData[i] and 0x00FF).toByte()
-        bData[i * 2 + 1] = (sData[i].shr(8)).toByte()
-      }
-      return bData
-    }
-
-    private fun onError(errorCode: Int) {
-      if (errorCode == AudioRecord.ERROR_INVALID_OPERATION) {
-        mAudioDataCallback.onError()
-      } else if (errorCode == AudioRecord.ERROR_BAD_VALUE) {
-        mAudioDataCallback.onError()
-      }
-    }
   }
 }
-
-private fun Short.shr(i: Int): Short = (this.toInt() shr i).toShort()

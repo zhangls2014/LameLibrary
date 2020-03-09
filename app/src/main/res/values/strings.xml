@@ -1,3 +1,10 @@
 <resources>
     <string name="app_name">LameLibrary</string>
+  <string name="audio_play_fail">请先录音</string>
+  <string name="audio_play">Play Audio</string>
+  <string name="record_fail">录音失败</string>
+  <string name="record_start">Start Record</string>
+  <string name="record_stop">Stop Record</string>
+  <string name="permission_granted">Permission Granted</string>
+  <string name="permission_refused">Permission Refused</string>
 </resources>
