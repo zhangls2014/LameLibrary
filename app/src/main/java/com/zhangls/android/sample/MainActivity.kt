@@ -13,6 +13,7 @@ import com.zhangls.android.lame.AudioDataCallback
 import com.zhangls.android.lame.EncodeThread
 import com.zhangls.android.lame.StreamAudioRecorder
 import io.reactivex.android.schedulers.AndroidSchedulers
+import io.reactivex.disposables.Disposable
 import io.reactivex.schedulers.Schedulers
 import kotlinx.android.synthetic.main.activity_main.*
 import java.io.File
@@ -30,6 +31,7 @@ class MainActivity : RxAppCompatActivity() {
   private var outputFile: File? = null
   private var isRecording = false
   private var encodeThread: EncodeThread? = null
+  private var subscribe: Disposable? = null
 
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -65,10 +67,13 @@ class MainActivity : RxAppCompatActivity() {
   override fun onDestroy() {
     super.onDestroy()
     encodeThread?.quit()
+    subscribe?.let {
+      if (it.isDisposed) it.dispose()
+    }
   }
 
   private fun getPermission() {
-    val subscribe = permissions
+    subscribe = permissions
       .request(WRITE_EXTERNAL_STORAGE, RECORD_AUDIO)
       .subscribe { granted ->
         if (granted) {
@@ -107,7 +112,7 @@ class MainActivity : RxAppCompatActivity() {
     encodeThread?.start()
     outputFile = File(externalCacheDir?.path + File.separator + System.nanoTime() + ".mp3").let {
       if (it.createNewFile()) {
-        encodeThread?.setOutPutFile(it)
+        encodeThread?.setOutputFile(it)
         it
       } else {
         null

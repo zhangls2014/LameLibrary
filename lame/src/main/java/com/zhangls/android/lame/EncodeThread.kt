@@ -87,7 +87,7 @@ class EncodeThread(
   /**
    * 指定转换后的数据保存的文在
    */
-  fun setOutPutFile(file: File) {
+  fun setOutputFile(file: File) {
     // 允许持续向文件追加字节，而不是从头开始
     fileOutputStream = FileOutputStream(file, true)
   }
